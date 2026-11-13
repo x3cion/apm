@@ -183,6 +183,14 @@ class TestDiagnosticCollectorQueryHelpers:
         dc.skip("a.md", package="pkg1")
         assert dc.count_for_package("nonexistent") == 0
 
+    def test_skipped_paths_for_package_returns_only_its_collisions(self):
+        dc = DiagnosticCollector()
+        dc.skip(".claude/skills/demo", package="pkg1")
+        dc.skip("b.md", package="pkg2")
+        dc.warn("c.md", package="pkg1")
+        assert dc.skipped_paths_for_package("pkg1") == frozenset({".claude/skills/demo"})
+        assert dc.skipped_paths_for_package("nonexistent") == frozenset()
+
 
 # ── DiagnosticCollector — rendering ─────────────────────────────────
 

@@ -233,6 +233,26 @@ def _run_cleanup(ctx: InstallContext, receipt_retirements: list[Path]) -> None:
             if not stale:
                 continue
 
+            # A path this package skipped this run (an existing destination it
+            # did not overwrite) was not re-deployed, so it looks stale. It is
+            # not: deleting it would destroy the very content the skip protected.
+            # Carry its prior claim forward instead, exactly like a retained path.
+            skipped = _under_skipped_paths(stale, diagnostics.skipped_paths_for_package(dep_key))
+            if skipped:
+                stale -= skipped
+                new_deployed.extend(sorted(skipped))
+                package_cleanup_retained[dep_key] = {
+                    **package_cleanup_retained.get(dep_key, {}),
+                    **{path: prev_dep.deployed_file_hashes.get(path) for path in skipped},
+                }
+                if logger:
+                    for skipped_path in sorted(skipped):
+                        logger.verbose_detail(
+                            f"Kept {skipped_path} for {dep_key}; it was skipped this run"
+                        )
+                if not stale:
+                    continue
+
             # Cross-package file protection (#1831): do not remove a file
             # that another currently-installed package still deploys.
             # package_deployed_files is integration outcome, not a security
@@ -274,8 +294,11 @@ def _run_cleanup(ctx: InstallContext, receipt_retirements: list[Path]) -> None:
             )
             if cleanup_result.retained:
                 package_cleanup_retained[dep_key] = {
-                    path: prev_dep.deployed_file_hashes.get(path)
-                    for path in cleanup_result.retained
+                    **package_cleanup_retained.get(dep_key, {}),
+                    **{
+                        path: prev_dep.deployed_file_hashes.get(path)
+                        for path in cleanup_result.retained
+                    },
                 }
             if cleanup_result.deleted_targets:
                 BaseIntegrator.cleanup_empty_parents(cleanup_result.deleted_targets, project_root)
@@ -288,6 +311,22 @@ def _run_cleanup(ctx: InstallContext, receipt_retirements: list[Path]) -> None:
                         f"Renamed {_aliased} to the new letter case from {dep_key}"
                     )
                 logger.stale_cleanup(dep_key, len(cleanup_result.deleted))
+
+
+def _under_skipped_paths(stale: set[str], skipped: frozenset[str]) -> set[str]:
+    """Return the stale entries equal to, or inside, a path skipped this run.
+
+    A skipped skill is recorded by its directory, while the lockfile also
+    claims each member file, so members count as skipped with their directory.
+    """
+    if not skipped:
+        return set()
+    roots = tuple(path.rstrip("/") for path in skipped)
+    return {
+        path
+        for path in stale
+        if path.rstrip("/") in roots or path.startswith(tuple(f"{root}/" for root in roots))
+    }
 
 
 def _pin_retained_ancestors(

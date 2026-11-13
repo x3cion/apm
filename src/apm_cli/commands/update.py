@@ -899,6 +899,12 @@ def _run_dep_update_locked(
                 logger.info("Run with --verbose for detailed diagnostics.")
             sys.exit(1)
 
+    # A successful update can still have skipped or kept files; show them as
+    # `apm install` does, before the success line.
+    diagnostics = getattr(result, "diagnostics", None)
+    if diagnostics is not None and diagnostics.has_diagnostics:
+        diagnostics.render_summary()
+
     if plan_state.proceeded:
         # Report the number of dependencies that actually changed (per the
         # plan), not the total tree re-materialized (result.installed_count).

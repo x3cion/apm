@@ -55,6 +55,7 @@ def _make_ctx(
     ctx.apm_package = None
     ctx.diagnostics = MagicMock()
     ctx.diagnostics.count_for_package.return_value = 0
+    ctx.diagnostics.skipped_paths_for_package.return_value = frozenset()
     ctx.logger = MagicMock()
     return ctx
 
@@ -702,6 +703,58 @@ class TestStaleCleanupErrorPackageSkipped:
 # ---------------------------------------------------------------------------
 # Block 9: stale-file cleanup — prev_dep not found → skipped
 # ---------------------------------------------------------------------------
+
+
+class TestStaleCleanupKeepsSkippedPaths:
+    def test_skipped_skill_members_are_kept_and_claims_carried_forward(self):
+        """A skill skipped this run is neither deleted nor dropped from the lock."""
+        skipped_dir = ".claude/skills/demo"
+        members = [f"{skipped_dir}/SKILL.md", f"{skipped_dir}/asset.md"]
+        sibling = ".claude/skills/demo-two/SKILL.md"
+        removed = ".claude/skills/gone/SKILL.md"
+        prev_dep = _make_orphan_dep(
+            [*members, sibling, removed],
+            file_hashes={members[0]: "sha256:one", removed: "sha256:gone"},
+        )
+        new_deployed = [sibling]
+        ctx = _make_ctx(
+            existing_lockfile=_make_lockfile({"pkg": prev_dep}),
+            intended_dep_keys={"pkg"},
+            package_deployed_files={"pkg": new_deployed},
+        )
+        ctx.targets = [KNOWN_TARGETS["claude"]]
+        ctx.diagnostics = DiagnosticCollector()
+        ctx.diagnostics.skip(skipped_dir, package="pkg")
+        ctx.diagnostics.skip(".claude/skills/other", package="other-pkg")
+
+        with patch(
+            "apm_cli.install.phases.cleanup.remove_stale_deployed_files",
+            return_value=CleanupResult(deleted=[removed]),
+        ) as remove_stale:
+            cleanup.run(ctx)
+
+        assert remove_stale.call_args.args[0] == {removed}
+        assert set(members) <= set(new_deployed)
+        assert ctx.package_cleanup_retained["pkg"] == {members[0]: "sha256:one", members[1]: None}
+
+    def test_only_skipped_paths_means_no_removal_call(self):
+        skipped = ".claude/skills/demo/SKILL.md"
+        prev_dep = _make_orphan_dep([skipped])
+        new_deployed: list[str] = []
+        ctx = _make_ctx(
+            existing_lockfile=_make_lockfile({"pkg": prev_dep}),
+            intended_dep_keys={"pkg"},
+            package_deployed_files={"pkg": new_deployed},
+        )
+        ctx.targets = [KNOWN_TARGETS["claude"]]
+        ctx.diagnostics = DiagnosticCollector()
+        ctx.diagnostics.skip(".claude/skills/demo", package="pkg")
+
+        with patch("apm_cli.install.phases.cleanup.remove_stale_deployed_files") as remove_stale:
+            cleanup.run(ctx)
+
+        remove_stale.assert_not_called()
+        assert new_deployed == [skipped]
 
 
 class TestStaleCleanupNoPrevDep:

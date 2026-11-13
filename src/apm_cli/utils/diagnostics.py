@@ -327,6 +327,15 @@ class DiagnosticCollector:
                 if d.package == package and (not category or d.category == category)
             )
 
+    def skipped_paths_for_package(self, package: str) -> frozenset[str]:
+        """Return the paths recorded by :meth:`skip` for *package*."""
+        with self._lock:
+            return frozenset(
+                d.message
+                for d in self._diagnostics
+                if d.package == package and d.category == CATEGORY_COLLISION
+            )
+
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
